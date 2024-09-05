@@ -1,0 +1,45 @@
+trigger:
+  branches:
+    include:
+    - "*"
+variables:
+- group: cs_falcon_vars
+- name: FALCON_CLOUD_REGION
+  value: 'us-2'
+- name: SCORE
+  value: 500000
+stages:
+- stage: __default
+  jobs:
+  - job: Job
+    pool:
+      vmImage: ubuntu-latest
+    steps:
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'jmckenzieacr'
+        repository: '$(CONTAINER_REPO)'
+        command: 'build'
+        Dockerfile: '**/Dockerfile'
+        tags: 'latest'
+      displayName: 'Build container image'
+    - task: CmdLine@2
+      inputs:
+        script: 'docker tag nginx:latest $(CONTAINER_REPO)'
+      displayName: 'Tag container image'
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'jmckenzieacr'
+        repository: '$(CONTAINER_REPO)'
+        tags: 'latest'
+        command: 'push'
+    - task: CmdLine@2
+      displayName: 'Scan container-image'
+      inputs:
+        script: "export FALCON_CLIENT_SECRET=$(FALCON_CLIENT_SECRET)\nexport FALCON_CLIENT_ID=$(FALCON_CLIENT_ID)\npip3 install docker crowdstrike-falconpy\npip install retry\nif [ ! -d container-image-scan ] ; then\n  git clone https://github.com/crowdstrike/container-image-scan\nfi\npython3 container-image-scan/cs_scanimage.py --json-report report.json \n"
+    - task: CmdLine@2
+      displayName: 'Print CrowdStrike Full Image Scan Report'
+      inputs:
+        script: |
+          jq '.' report.json
+
