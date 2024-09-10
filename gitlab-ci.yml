@@ -1,0 +1,75 @@
+
+#image: docker:20.10.16 # Use a Docker image with Docker pre-installed
+image: docker:latest # Use a Docker image with Docker pre-installed
+services:
+  - docker:dind
+
+before_script:
+  # Install necessary packages
+  - apk add --no-cache git python3 py3-pip python3-dev build-base
+  
+  # Create and activate a virtual environment
+  - python3 -m venv venv
+  - . venv/bin/activate
+  
+  # Install the required Python libraries in the virtual environment
+  - pip install docker crowdstrike-falconpy
+  - pip install retry
+
+   # Log in to Docker registry
+  - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+
+  
+variables:
+  BUILD_DIR: "."
+  FALCON_CLOUD_REGION: 'us-2'
+  SCORE: 500000
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+  DOCKER_TLS_VERIFY: 1
+  DOCKER_CERT_PATH: "$DOCKER_TLS_CERTDIR/client"
+ # CONTAINER_REPO: 'registry.gitlab.com/jmckenziegitlab/image-assessment' # Replace with your repository name
+
+stages:
+  - build
+  - scan
+  - push
+#  - report
+
+build_image:
+  stage: build
+  script:
+    # Build the Docker image
+    - docker build -t $CONTAINER_REPO:$CONTAINER_TAG $BUILD_DIR
+    - docker image list  # List the images to verify
+    # Save the image as a tarball
+    - docker save $CONTAINER_REPO:$CONTAINER_TAG -o image.tar
+  artifacts:
+    paths:
+      - image.tar  # Save the image.tar file as an artifact to be shared with later stages
+
+scan_image:
+  stage: scan
+  script:
+    # Load the image from the tarball
+    - docker load -i image.tar
+    - docker image list  # Verify the image was loaded
+    - |
+      if [ ! -d container-image-scan ] ; then
+        git clone https://github.com/crowdstrike/container-image-scan
+      fi
+    - . venv/bin/activate
+    - python container-image-scan/cs_scanimage.py
+  dependencies:
+    - build_image  # Depend on the build_image stage to use the artifact
+
+push_image:
+  stage: push
+  script:
+    # Load the image from the tarball again
+    - docker load -i image.tar
+    - docker image list  # Verify the image was loaded
+    - docker push $CONTAINER_REPO:$CONTAINER_TAG  # Push the image to the container registry
+  dependencies:
+    - build_image  # Depend on the build_image stage to use the artifact
+
